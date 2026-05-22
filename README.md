@@ -1,126 +1,104 @@
+# ifcgref-corenetx
 
-# IfcGref Web-Based Application
+A Singapore-focused fork of [tudelft3d/ifcgref](https://github.com/tudelft3d/ifcgref) with a CORENET X / IFC-SG compliance check on top of the original geo-referencing inspector.
 
-![ifcgref-release](https://github.com/tudelft3d/ifcgref/assets/50393714/e335cd23-d063-4f86-8cdf-d9898b6a955a)
+Inspect the geo-referencing data in your IFC model, see Corenet X IFC-SG compliance flags for Singapore models, and visualise the geometry on a real-world map.
 
+## What this fork adds
 
-## Overview
+- **CORENET X IFC-SG checklist** on the report page — three checks: CRS is SVY21 / EPSG:3414, `IfcGeographicElement` with `ObjectType='SITEBOUNDARY'` is present, and coordinates land within the SVY21 Singapore map. Failing checks show tips for fixing them in your BIM software.
+- **IFC unit awareness** — placement coordinates are converted to metres from whatever the IFC project unit is (`MILLI`/`CENTI`/`METRE`, or `IfcConversionBasedUnit` like `INCH`/`FOOT`) before comparing against SG bounds.
+- **3D viewer site-boundary toggle** — iOS-style switch to subset the loaded IFC down to just the `SITEBOUNDARY` geometry vs. showing the whole model.
+- **50 MB upload cap** with three-layer enforcement and a privacy warning, to discourage uploading federated multi-discipline BIMs with sensitive data.
+- **Magic-byte upload check** — rejects anything that doesn't start with `ISO-10303-21`, regardless of extension.
+- **Production-ready config** — env-driven secrets, hardened session cookies, structured logging, gunicorn entry point.
 
-This Flask-based application serves the purpose of georeferencing IFC (Industry Foundation Classes) files, which are commonly used in the context of Building Information Modeling (BIM) data exchange. To accomplish georeferencing, the application leverages the **IFCMapConversion** entity in IFC4, which facilitates the updating of data and the conversion from a local Coordinate Reference System (CRS), often referred to as the engineering coordinate system, into the coordinate reference system of the underlying map (Projected CRS). It's accessible at https://ifcgref.bk.tudelft.nl.
-
-
-
-## Prerequisites
-
-Before running the application, make sure you have the following prerequisites installed on your system:
-
-- Python 3
-- Flask
-- ifcopenshell
-- pyproj
-- pint
-- numpy
-- scipy
-- pandas
-- shapely
-
-You can install these dependencies using pip:
+## Running locally
 
 ```bash
-pip install Flask ifcopenshell pyproj pint numpy scipy pandas shapely
+# 1. Clone and enter the directory
+git clone https://github.com/chunyen93/ifcgref-corenetx.git
+cd ifcgref-corenetx
+
+# 2. (Recommended) create a virtualenv
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Copy the env template and fill it in
+cp .env.example .env
+# Edit .env — set FLASK_SECRET_KEY (any random string for dev) and
+# MAPTILER_KEY (free at https://www.maptiler.com/)
+
+# 5. Load env and run
+export $(grep -v '^#' .env | xargs)
+python app.py
 ```
+
+Open <http://localhost:5000/>.
+
+## Environment variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `FLASK_SECRET_KEY` | prod | `dev-secret-change-me` | Signs the session cookie. Generate with `python -c "import secrets; print(secrets.token_hex(32))"`. |
+| `MAPTILER_KEY` | yes | empty | MapTiler API key for the 3D viewer basemap. Free tier is enough. |
+| `FLASK_ENV` | no | empty | Set to `development` to enable debug mode and allow http session cookies. |
+| `LOG_LEVEL` | no | `INFO` | Standard logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `PORT` | no | `5000` | Dev server port. Production hosts (Render, Heroku) inject their own. |
+
+## Deploying
+
+### Render.com (recommended)
+
+The repo includes [render.yaml](render.yaml) — connect this repo at <https://dashboard.render.com/select-repo> and Render will read the config. On the first deploy:
+
+1. Render auto-generates `FLASK_SECRET_KEY`.
+2. You'll be prompted for `MAPTILER_KEY` (sync: false → set manually in the dashboard).
+3. Build runs `pip install -r requirements.txt`; start runs `gunicorn app:app …`.
+4. Free tier spins down on idle (~30 s wake on first hit).
+
+### Any host with Python + gunicorn
+
+```bash
+gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+```
+
+A [Procfile](Procfile) is included for Heroku-style hosts.
+
+> **Won't work on Netlify or Vercel** — both are serverless. This app needs persistent disk between requests (upload → parse → visualize) and 60-second-plus parsing time, neither of which fits serverless function limits.
+
+## Privacy
+
+This is **not** a local-only tool — uploaded IFCs are sent to and processed on the hosting server. Each new upload purges the previous file from the local cache, but earlier copies may persist in server logs / backups depending on how the host operates. **Don't upload confidential or NDA-restricted models** to a public-internet deployment. The 50 MB cap and the warnings on every page exist to nudge you toward site/coordination models, not federated full-discipline BIMs.
 
 ## Supported IFC versions
 
+| IFC version | Notes |
+|---|---|
+| IFC 4.3 ADD2 | Full support |
+| IFC 4 (all addenda) | Full support |
+| IFC 2x3 | Geo-referencing via Pset_SiteCommon |
 
-Coordinate operations become accessible starting from IFC 4. For earlier versions like the widely utilized IFC2x3, the utilization of Property sets (Pset) is employed to enable georeferencing. The table below outlines the supported versions: 
+## Project layout
 
-| Version | Name |
-| -------- | ------- |
-| 4.3.2.0 | IFC 4.3 ADD2 |
-| 4.0.2.0 | IFC4 ADD2 TC1 |
-| 4.0.2.1 | IFC4 ADD2 |
-| 4.0.2.0	| IFC4 ADD1 |
-| 4.0.0.0 | IFC4 |
-| 2.3.0.1 | IFC2x3 TC1 |
-| 2.3.0.0 | IFC2x3 |
-
-
-## Usage
-
-1. Clone this repository or download the application files to your local machine.
-
-2. Navigate to the project directory in your terminal.
-
-3. Run the Flask application:
-
-```bash
-python app.py
 ```
-This will start the Flask development server.
-
-4. Access the application in your web browser by going to http://localhost:5000/.
-5. Follow the on-screen instructions to upload an IFC file and specify the target EPSG code.
-6. The application will georeference the IFC file and provide details about the process.
-7. You can then visualize the georeferenced IFC file on the map and download it.
-
-## File Structure
-
-- app.py: The main Flask application file.
-- static/: Directory to store static files (e.g., GeoJSON output).
-- templates/: HTML templates for the web interface.
-- uploads/: Directory to temporarily store uploaded IFC files.
-- envelop/: Directory to EnvelopExtractor exe files and temporary store shell produced files.
-
-## Workflow
-
-![Screenshot 2024-02-26 at 17 28 20 (2)](https://github.com/tudelft3d/ifcgref/assets/50393714/3d14b4c7-9652-4b77-bc5b-77bd2a736341)
-
-## HTTP request
-
-For streamlined handling of incoming IFC files by developers, whether they are georeferenced or not, a specialized section called "devs" is available at https://ifcgref.bk.tudelft.nl/devs. Developers can engage with this section by submitting an HTTP request containing the IFC file, and in response, the server provides them with a corresponding response.
-
-Sample of HTTP request from the devs section using a python script:
-
-```bash
-import requests
-
-url = 'https://ifcgref.bk.tudelft.nl/devs'
-file_path = './00.ifc'
-
-
-data = {
-    'file': ('00.ifc', open(file_path, 'rb'))
-}
-
-
-# Make a POST request to the /devs route with the data
-response = requests.post(url, files=data)
-
-# Print the response content
-print(response.text)
+app.py              Flask routes, IFC parsing, CORENET X checks
+georeference_ifc/   Vendored geo-reference helpers from upstream
+static/             CSS, fonts, images, favicon
+templates/          Jinja templates (upload, result, view3D, convert, survey)
+uploads/            Runtime upload cache (gitignored)
+requirements.txt    Pinned Python dependencies
+render.yaml         Render.com one-click deploy config
+Procfile            Heroku-style web process declaration
 ```
-
 
 ## Credits
 
-- This application uses the Flask web framework for the user interface.
-- It leverages the ifcopenshell library for working with IFC files.
-- Georeferencing is performed using pyproj for coordinate transformations.
-- The optimization is performed using SciPy and in particular scipy.optimize.least_squares function.
-- For the vizualization feature IfcEnvelopeExtractor is used for generating the roof-print of the 3D BIM model.
+Built on top of [tudelft3d/ifcgref](https://github.com/tudelft3d/ifcgref) by the 3D Geoinformation group at TU Delft (MIT). The CORENET X / IFC-SG layer follows the BCA CORENET X Pilot Mapping; refer to the BCA CORENET X website for the official submission requirements.
 
+## License
 
-
-## Acknowledgments
-
-This project has received funding from the European Union’s Horizon Europe programme under Grant Agreement No.101058559 (CHEK: Change toolkit for digital building permit).
-
-
-## References
-
-BuildingSMART. IFC Specifications database. https://technical.buildingsmart.org/standards/ifc/ifc-schema-specifications/
-
-BuildingSMART Australasia (2020). User Guide for Geo-referencing in IFC, version 2.0. https://www.buildingsmart.org/wp-content/uploads/2020/02/User-Guide-for-Geo-referencing-in-IFC-v2.0.pdf
-
-https://github.com/stijngoedertier/georeference-ifc#readme
+MIT — see [LICENSE](LICENSE).

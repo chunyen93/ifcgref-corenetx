@@ -1,0 +1,18 @@
+# Exact pins for reproducible deploys. Update deliberately, not casually.
+# Generated 2026-05; verify wheels still exist for your Python version
+# before bumping (especially ifcopenshell).
+
+# ── Web framework ──
+Flask==3.1.3
+gunicorn==23.0.0
+
+# ── IFC parsing ──
+ifcopenshell==0.8.4.post1
+
+# ── Geospatial ──
+pyproj==3.6.1
+pint==0.24.4
+
+# ── Numerics / data ──
+pandas==2.3.3
+scipy==1.13.1

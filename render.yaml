@@ -1,0 +1,29 @@
+# One-click deploy config for Render.com. Connect this repo at
+# https://dashboard.render.com/select-repo and Render will read this file.
+#
+# Notes:
+# - The free tier spins down on idle and takes ~30s to wake. Upgrade to a
+#   paid plan for always-on.
+# - `uploads/` is wiped on every new upload by purge_uploads(), so we don't
+#   need a persistent disk — the ephemeral filesystem is fine for this app.
+# - Don't commit real secret values here. Set FLASK_SECRET_KEY and
+#   MAPTILER_KEY as environment variables in the Render dashboard
+#   (Service → Environment).
+
+services:
+  - type: web
+    name: ifcgref-corenetx
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: MAPTILER_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
