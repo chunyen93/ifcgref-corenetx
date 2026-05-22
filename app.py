@@ -1,22 +1,28 @@
-from flask import Flask, render_template, request, redirect, url_for, session, make_response, send_from_directory # Import the redirect function
-from werkzeug.utils import secure_filename
-import os
-import ifcopenshell
-import ifcopenshell.geom
-import georeference_ifc
-import re
-import pyproj
-from pyproj import Transformer
-import pint
-import numpy as np
-import math
-from scipy.optimize import leastsq
-import pandas as pd
 import json
-from shapely.geometry import Polygon, mapping
+import math
+import os
+import re
+
+import ifcopenshell
 import ifcopenshell.util.placement
-import subprocess
-import time
+import pandas as pd
+import pint
+import pyproj
+from flask import (
+    Flask,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    session,
+    url_for,
+)
+from pyproj import Transformer
+from scipy.optimize import leastsq
+from werkzeug.utils import secure_filename
+
+import georeference_ifc
 
 
 app = Flask(__name__, static_url_path='/static', static_folder='static')
@@ -155,33 +161,16 @@ def infoExt(filename , epsgCode):
                 ifcunit = ifc_unit.Prefix + ifc_unit.Name
             else:
                 ifcunit = ifc_unit.Name
-    try: 
+    try:
         quantity = unitmapper(ifcunit)
         ifcmeter = quantity.to(ureg.meter).magnitude
     except:
         ifcmeter = None
-    # try:
-    #     if ifcunit in unit_mapping:
-    #         quantity = 1 * unit_mapping[ifcunit]
-    #         ifcmeter = quantity.to(ureg.meter).magnitude
-    #     else:
-    #         ifcmeter = None
-    # except:
-    #     ifcmeter = None
-    try: 
+    try:
         quantity = unitmapper(crsunit)
         crsmeter = quantity.to(ureg.meter).magnitude
     except:
         crsmeter = None
-
-    # try:
-    #     if crsunit in unit_mapping:
-    #         quantity = 1 * unit_mapping[crsunit]
-    #         crsmeter = quantity.to(ureg.meter).magnitude
-    #     else:
-    #         crsmeter = None
-    # except:
-    #     crsmeter = None
 
     if crsmeter is not None and ifcmeter is not None:
         coeff= ifcmeter/crsmeter
@@ -215,9 +204,6 @@ def infoExt(filename , epsgCode):
         session['xt'] = x1
         session['yt'] = y1
         session['zt'] = z1
-        session['Longitude'] = y0
-        session['Latitude'] = x0
-
 
     return messages, errorMessage
 
@@ -484,35 +470,6 @@ def upload_file():
     else:
         return render_template('upload.html', error_message="Invalid file format. Please upload a .ifc file.")
 
-@app.route('/devs', methods=['GET', 'POST'])
-def devs_upload():
-    if request.method == 'POST':
-        purge_uploads()
-        if 'file' not in request.files:
-            return "No file part"
-
-        file = request.files['file']
-
-        if file.filename == '':
-            return "No selected file"
-
-        if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-            ifc_file = fileOpener(filename)
-
-            # Check if the IFC file is georeferenced
-            message, geo = georef(ifc_file)
-
-            if geo:
-                IfcMapConversion, IfcProjectedCRS = georeference_ifc.get_mapconversion_crs(ifc_file=ifc_file)
-                dg = pd.DataFrame(list(IfcMapConversion.__dict__.items()), columns= ['property', 'value'])
-                message += "IfcMapconversion:\n\n" + dg.to_string()
-                return f"Filename: {filename}\nGeoreferenced: YES\n{message}"
-            else:
-                message += "For georeferencing the IFC file, please visit the following address in a web browser:\nhttps://ifcgref.bk.tudelft.nl"
-                return f"Filename: {filename}\nGeoreferenced: NO\n{message}"
-                
 @app.route('/convert/<filename>', methods=['GET', 'POST'])
 def convert_crs(filename):
     if request.method == 'POST':
@@ -735,23 +692,10 @@ def calculate(filename):
     
 def fileOpener(filename):
     fn = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    print("Opening IFC file:", fn)  # Add this line for debugging
     try:
-        ifc_file = ifcopenshell.open(fn)
-        # ifc_schema = ifc_file.schema
-        # ifc_site = ifc_file.by_type("IfcSite")[0]
-        # ifc_unit = ifc_file.by_type("IfcUnitAssignment")[0].Units
-        # ifc_geom = ifc_file.by_type("IfcGeometricRepresentationContext")[0]
-        # ifc_mapconv, ifc_projcrs = georeference_ifc.get_mapconversion_crs(ifc_file=ifc_file)
-        # session['ifc_schema'] = ifc_schema
-        # session['ifc_site'] = pickle.dumps(ifc_site.ObjectPlacement)
-        # # session['ifc_unit'] = ifc_unit
-        # # session['ifc_geom'] = ifc_geom
-        # # session['ifc_mapconv'] = ifc_mapconv
-        # # session['ifc_projcrs'] = ifc_projcrs
-        return ifc_file
+        return ifcopenshell.open(fn)
     except Exception as e:
-        print("Error opening IFC file:", str(e))  # Add this line for debugging
+        app.logger.warning("Failed to open IFC %s: %s", fn, e)
         return None
 
 @app.route('/show/<filename>', methods=['POST'])
@@ -816,30 +760,17 @@ def visualize(filename):
     lon,lat = transformer2.transform(xx,yy)
     Latitude = lat
     Longitude = lon
-    projstring = pyproj.CRS(target_epsg).to_proj4()
-    crs = pyproj.CRS(projstring)
-    alpha_value = crs.to_dict().get('alpha', None)
-    Scale_value = crs.to_dict().get('k', None)
-    if Scale_value is None:
-        Scale_value = 1
-    # if Scale_value is not None:
-    #     Snew = Snew/Scale_value
-    # if alpha_value is not None:
+    Scale_value = pyproj.CRS(target_epsg).to_dict().get('k') or 1
+
+    # Rotate the IFC's grid-north onto Mercator (Web map) north so the model
+    # aligns with the basemap when projected. Sample a 1 km easting offset and
+    # take its bearing in EPSG:3857.
     transformer3 = Transformer.from_crs(target_epsg, "EPSG:3857", always_xy=True)
     x_3857, y_3857 = transformer3.transform(xx, yy)
-    xn_3857, yn_3857 = transformer3.transform(xx+1000, yy)
-    dx = -x_3857 + xn_3857
-    dy = -y_3857 + yn_3857
-    angle_radians = math.atan2(dy, dx)
-    angle_degrees = math.degrees(angle_radians)
+    xn_3857, yn_3857 = transformer3.transform(xx + 1000, yy)
+    angle_radians = math.atan2(yn_3857 - y_3857, xn_3857 - x_3857)
     Rotation_solution = Rotation_solution + angle_radians
-    length = math.sqrt(dx**2 + dy**2)
-    # transformer3 = Transformer.from_crs(target_epsg, "EPSG:3857", always_xy=True)
-    x_3857, y_3857 = transformer3.transform(xx, yy)
-    xn_3857, yn_3857 = transformer3.transform((xx+50), (yy+50))
-    dx = -x_3857 + xn_3857
-    dy = -y_3857 + yn_3857
-    length = math.sqrt(dx**2 + dy**2)
+
     min_z_value = float('inf')
 
     for product in ifc_file.by_type('IfcProduct'):
