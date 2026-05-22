@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IfcGref — IFC Geo-Reference</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/flavicon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <style>
+        main.upload-screen {
+            flex: 1; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            padding: 48px 24px 32px;
+            position: relative;
+            overflow: hidden;
+        }
+        .dot-canvas {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+        main.upload-screen > *:not(.dot-canvas) { position: relative; z-index: 1; }
+
+        .upload-card {
+            width: 100%; max-width: 520px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            box-shadow: 0 2px 24px oklch(0% 0 0 / 0.04);
+            overflow: hidden;
+            animation: fadeUp 0.3s ease both;
+        }
+        .tab-bar { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); padding: 0 20px; }
+        .tab { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.05em; padding: 12px 16px; border-bottom: 2px solid var(--accent); color: var(--accent); font-weight: 500; user-select: none; }
+
+        .drop-zone {
+            padding: 44px 32px;
+            display: flex; flex-direction: column; align-items: center;
+            gap: 16px; cursor: pointer;
+            transition: background 0.2s; outline: none;
+        }
+        .drop-zone.hidden { display: none; }
+
+        /* Processing state — replaces the drop-zone after upload starts */
+        .processing-state {
+            display: none;
+            padding: 44px 32px;
+            flex-direction: column; align-items: center; gap: 16px;
+            animation: fadeUp 0.3s ease both;
+        }
+        .processing-state.active { display: flex; }
+        .spinner-wrap {
+            width: 72px; height: 72px;
+            display: grid; place-items: center;
+            border-radius: 16px;
+            background: var(--accent-dim);
+        }
+        .spinner {
+            width: 36px; height: 36px;
+            border: 3px solid oklch(55% 0.18 196 / 0.2);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .processing-label { text-align: center; }
+        .processing-label strong { display: block; font-size: 15px; font-weight: 500; margin-bottom: 4px; color: var(--text); }
+        .processing-label span { font-size: 13px; color: var(--text-3); }
+        .processing-filename {
+            font-family: var(--mono); font-size: 10.5px;
+            color: var(--text-3); letter-spacing: 0.06em;
+            background: var(--bg2); border: 1px solid var(--border);
+            padding: 5px 12px; border-radius: 99px;
+            max-width: 280px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .drop-zone:hover, .drop-zone.dragover { background: var(--accent-dim); }
+        .drop-zone.dragover .drop-icon-wrap { border-color: var(--accent); transform: scale(1.05); }
+        .drop-icon-wrap {
+            width: 72px; height: 72px;
+            border: 1.5px dashed var(--border-strong);
+            border-radius: 16px;
+            display: grid; place-items: center;
+            transition: border-color 0.2s, transform 0.2s;
+            background: var(--bg2);
+        }
+        .drop-icon-wrap svg { width: 28px; height: 28px; stroke: var(--text-3); transition: stroke 0.2s; }
+        .drop-zone:hover .drop-icon-wrap svg, .drop-zone.dragover .drop-icon-wrap svg { stroke: var(--accent); }
+        .drop-label { text-align: center; }
+        .drop-label strong { display: block; font-size: 15px; font-weight: 500; margin-bottom: 4px; }
+        .drop-label span { font-size: 13px; color: var(--text-3); }
+        .accent-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+        .file-types { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); letter-spacing: 0.08em; background: var(--bg2); border: 1px solid var(--border); padding: 5px 12px; border-radius: 99px; }
+        input[type="file"] { display: none; }
+
+        .privacy { margin-top: 24px; max-width: 480px; }
+    </style>
+</head>
+<body>
+    {% include '_header.html' %}
+
+    <main class="upload-screen" id="upload-screen">
+        <canvas class="dot-canvas" id="dot-canvas"></canvas>
+
+        <div class="page-hero fade-up">
+            <div class="hero-eyebrow">Open · Standards-Based · IFC2x3 / IFC4</div>
+            <h1><strong>IFC Geo-Reference</strong> Tool</h1>
+            <p>Inspect the geo-referencing data in your IFC model. Reads any projected CRS worldwide — and automatically flags Corenet X IFC-SG compliance for Singapore models.</p>
+        </div>
+
+        {% if error_message %}
+        <div class="alert error fade-up" style="max-width: 520px;">{{ error_message }}</div>
+        {% endif %}
+
+        <form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form">
+            <div class="upload-card">
+                <div class="tab-bar"><div class="tab" id="tab-label">↑ UPLOAD IFC</div></div>
+                <div class="drop-zone" id="drop-zone" tabindex="0">
+                    <div class="drop-icon-wrap">
+                        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 10l-4-4-4 4M12 6v10"/>
+                        </svg>
+                    </div>
+                    <div class="drop-label">
+                        <strong>Drop your IFC file here</strong>
+                        <span>or <span class="accent-link">browse</span> to select</span>
+                    </div>
+                    <div class="file-types">.ifc · IFC2x3 · IFC4 · IFC4.3 · max 50 MB</div>
+                    <input type="file" name="file" id="file-input" accept=".ifc">
+                </div>
+                <div class="processing-state" id="processing-state">
+                    <div class="spinner-wrap"><div class="spinner"></div></div>
+                    <div class="processing-label">
+                        <strong>Processing your IFC model…</strong>
+                        <span>Parsing geometry, units, and geo-reference data.</span>
+                    </div>
+                    <div class="processing-filename" id="processing-filename"></div>
+                </div>
+            </div>
+        </form>
+
+        <div class="privacy-note warn">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <p><strong>Heads up — your model is uploaded to the server for processing.</strong> The IFC file leaves your device and is parsed on the hosting server, so it may be exposed to whoever administers that server. Review your model for sensitive information (project names, client identifiers, addresses, internal codes, proprietary geometry) before uploading. Do not upload confidential or NDA-restricted models.</p>
+        </div>
+    </main>
+
+    {% include '_footer.html' %}
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const form = document.getElementById('upload-form');
+        const processingState = document.getElementById('processing-state');
+        const processingFilename = document.getElementById('processing-filename');
+        const tabLabel = document.getElementById('tab-label');
+
+        const MAX_BYTES = 50 * 1024 * 1024;
+
+        const showSizeError = (file) => {
+            const mb = (file.size / (1024 * 1024)).toFixed(1);
+            let existing = document.getElementById('client-size-error');
+            if (existing) existing.remove();
+            const el = document.createElement('div');
+            el.id = 'client-size-error';
+            el.className = 'alert error fade-up';
+            el.style.maxWidth = '520px';
+            el.style.marginTop = '16px';
+            el.textContent = `"${file.name}" is ${mb} MB — over the 50 MB limit. Trim to a site/coordination model (terrain, site boundary, georeferencing data) before uploading. Federated BIMs often carry sensitive data — keep them on your device.`;
+            form.parentNode.insertBefore(el, form.nextSibling);
+            fileInput.value = '';
+        };
+
+        const startProcessing = () => {
+            const f = fileInput.files[0];
+            if (f) processingFilename.textContent = f.name;
+            dropZone.classList.add('hidden');
+            processingState.classList.add('active');
+            if (tabLabel) tabLabel.textContent = '↻ PROCESSING';
+        };
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (!fileInput.files.length) return;
+            const f = fileInput.files[0];
+            if (f.size > MAX_BYTES) { showSizeError(f); return; }
+            startProcessing();
+            form.submit();
+        });
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault(); dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (!files.length) return;
+            const f = files[0];
+            if (f.size > MAX_BYTES) { showSizeError(f); return; }
+            fileInput.files = files;
+            startProcessing();
+            form.submit();
+        });
+
+        form.addEventListener('submit', (e) => {
+            const f = fileInput.files[0];
+            if (f && f.size > MAX_BYTES) { e.preventDefault(); showSizeError(f); return; }
+            startProcessing();
+        });
+
+        // ── Warping dot-grid background ──
+        (function initDotCanvas() {
+            const canvas = document.getElementById('dot-canvas');
+            const container = document.getElementById('upload-screen');
+            if (!canvas || !container) return;
+            const ctx = canvas.getContext('2d');
+            const mouse = { x: -999, y: -999 };
+
+            const GRID = 48;
+            const WARP_R = 340, WARP_STR = 22, DOT_R = 460;
+
+            const resize = () => {
+                canvas.width = container.offsetWidth || window.innerWidth;
+                canvas.height = container.offsetHeight || window.innerHeight;
+            };
+            const ro = new ResizeObserver(resize);
+            ro.observe(container);
+            resize();
+
+            container.addEventListener('mousemove', (e) => {
+                const r = container.getBoundingClientRect();
+                mouse.x = e.clientX - r.left;
+                mouse.y = e.clientY - r.top;
+            });
+            container.addEventListener('mouseleave', () => {
+                mouse.x = -999; mouse.y = -999;
+            });
+
+            const warp = (gx, gy, mx, my) => {
+                const dx = gx - mx, dy = gy - my;
+                const dist = Math.hypot(dx, dy) || 0.001;
+                const t = Math.max(0, 1 - dist / WARP_R);
+                // smootherstep falloff — gentle bend across the wider radius
+                const force = WARP_STR * t * t * t * (t * (6 * t - 15) + 10);
+                return [gx + (dx / dist) * force, gy + (dy / dist) * force];
+            };
+
+            function draw() {
+                requestAnimationFrame(draw);
+                const mx = mouse.x, my = mouse.y;
+                const W = canvas.width, H = canvas.height;
+                ctx.clearRect(0, 0, W, H);
+
+                const cols = Math.ceil(W / GRID) + 2;
+                const rows = Math.ceil(H / GRID) + 2;
+                const pts = [];
+                for (let r = 0; r < rows; r++) {
+                    pts[r] = [];
+                    for (let c = 0; c < cols; c++) {
+                        pts[r][c] = warp(c * GRID, r * GRID, mx, my);
+                    }
+                }
+
+                ctx.beginPath();
+                ctx.strokeStyle = 'oklch(18% 0.020 255 / 0.10)';
+                ctx.lineWidth = 1;
+                for (let r = 0; r < rows; r++) {
+                    ctx.moveTo(pts[r][0][0], pts[r][0][1]);
+                    for (let c = 1; c < cols; c++) ctx.lineTo(pts[r][c][0], pts[r][c][1]);
+                }
+                for (let c = 0; c < cols; c++) {
+                    ctx.moveTo(pts[0][c][0], pts[0][c][1]);
+                    for (let r = 1; r < rows; r++) ctx.lineTo(pts[r][c][0], pts[r][c][1]);
+                }
+                ctx.stroke();
+
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const [px, py] = pts[r][c];
+                        const dist = Math.hypot(c * GRID - mx, r * GRID - my);
+                        if (dist > DOT_R) continue;
+                        const alpha = Math.pow(1 - dist / DOT_R, 1.6);
+                        const radius = 1.5 + alpha * 2;
+                        ctx.beginPath();
+                        ctx.arc(px, py, radius, 0, Math.PI * 2);
+                        ctx.fillStyle = `oklch(18% 0.020 255 / ${alpha * 0.55})`;
+                        ctx.fill();
+                    }
+                }
+            }
+            draw();
+        })();
+    </script>
+</body>
+</html>

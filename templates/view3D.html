@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>IfcGref — 3D Viewer</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/flavicon.png') }}">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); }
+        body { display: block; }
+        #map { position: fixed; inset: 0; z-index: 1; }
+
+        /* Floating header — slimmer than site-header, transparent over map */
+        .view-header {
+            position: fixed; top: 0; left: 0; right: 0;
+            height: var(--header-h);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 20px;
+            background: oklch(99% 0.003 240 / 0.92);
+            backdrop-filter: blur(14px);
+            border-bottom: 1px solid var(--border);
+            z-index: 20;
+        }
+        .view-header .logo { display: flex; align-items: center; gap: 11px; text-decoration: none; color: var(--text); }
+        .view-header .logo-name { font-family: var(--font); font-weight: 500; font-size: 14px; }
+        .view-header .logo-name span { font-weight: 700; }
+        .view-header .header-tag {
+            font-family: var(--mono); font-size: 11px;
+            color: var(--text-3); letter-spacing: 0.06em;
+            border: 1px solid var(--border-strong);
+            padding: 3px 9px; border-radius: 4px; background: var(--bg2);
+        }
+
+        /* Header back link (replaces the right-side tag) */
+        .view-header .back-link {
+            display: inline-flex; align-items: center; gap: 7px;
+            font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+            color: var(--text-2); text-decoration: none;
+            border: 1px solid var(--border-strong);
+            padding: 5px 12px; border-radius: 99px;
+            background: var(--bg2);
+            transition: color 0.15s, border-color 0.15s;
+        }
+        .view-header .back-link:hover { color: var(--accent); border-color: var(--accent); }
+
+        /* Floating control panel bottom-left */
+        .viewer-controls {
+            position: fixed; bottom: 22px; left: 20px; z-index: 15;
+            display: flex; flex-direction: column; gap: 10px;
+            max-width: 320px;
+        }
+        .ctrl-card {
+            background: oklch(99% 0.003 240 / 0.95);
+            backdrop-filter: blur(14px);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px 14px;
+            box-shadow: 0 2px 16px oklch(0% 0 0 / 0.08);
+        }
+        .ctrl-label {
+            font-family: var(--mono); font-size: 10px;
+            letter-spacing: 0.12em; text-transform: uppercase;
+            color: var(--text-3); margin-bottom: 8px;
+        }
+
+        /* Segmented tab switch (replaces radio group) */
+        .elev-switch {
+            display: inline-flex; gap: 3px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px; padding: 3px;
+        }
+        .elev-tab {
+            font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+            padding: 6px 12px; border-radius: 6px;
+            border: none; cursor: pointer;
+            color: var(--text-3); background: none;
+            transition: background 0.15s, color 0.15s;
+            white-space: nowrap;
+        }
+        .elev-tab.active { background: var(--text); color: var(--surface); }
+
+        /* iOS-style toggle row for site-boundary display */
+        .toggle-row {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 14px;
+        }
+        .toggle-row .toggle-text {
+            font-size: 12.5px; color: var(--text-2); line-height: 1.3;
+        }
+        .toggle-row .toggle-sub {
+            display: block;
+            font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em;
+            color: var(--text-3); margin-top: 2px;
+        }
+        .ios-switch {
+            position: relative; flex-shrink: 0;
+            width: 38px; height: 22px;
+            background: var(--border-strong);
+            border-radius: 999px;
+            cursor: pointer;
+            transition: background 0.18s ease;
+        }
+        .ios-switch::after {
+            content: '';
+            position: absolute; top: 2px; left: 2px;
+            width: 18px; height: 18px;
+            background: #fff;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px oklch(0% 0 0 / 0.25);
+            transition: transform 0.2s ease;
+        }
+        .ios-switch input {
+            position: absolute; inset: 0;
+            opacity: 0; cursor: pointer;
+            margin: 0;
+        }
+        .ios-switch:has(input:checked) { background: var(--accent); }
+        .ios-switch:has(input:checked)::after { transform: translateX(16px); }
+        .ios-switch:has(input:disabled) { opacity: 0.4; cursor: not-allowed; }
+        .ios-switch:has(input:disabled) input { cursor: not-allowed; }
+        .toggle-row.disabled .toggle-text { color: var(--text-3); }
+
+        /* Top-right: map-tiles notice (moved out of bottom so MapLibre attribution is visible) */
+        .tiles-notice {
+            position: fixed; top: 72px; right: 20px; z-index: 15;
+            max-width: 280px;
+            font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em;
+            color: var(--text-3);
+            background: oklch(99% 0.003 240 / 0.85);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            padding: 5px 10px; border-radius: 6px;
+            line-height: 1.5;
+        }
+        .tiles-notice strong { color: var(--text-2); font-weight: 500; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="page-overlay active" id="viewer-overlay" aria-hidden="true">
+    <div class="overlay-content">
+        <div class="spinner-big"></div>
+        <div class="overlay-text">
+            <strong>Loading 3D model…</strong>
+            <span>Fetching map tiles and parsing your IFC geometry in your browser. Large models may take a few seconds.</span>
+        </div>
+    </div>
+</div>
+
+<div class="view-header">
+    <a class="logo" href="/">
+        {% include '_logo.html' %}
+        <span class="logo-name">geo<span>ref</span></span>
+    </a>
+    <a class="back-link" href="/">← HOME</a>
+</div>
+
+<div class="viewer-controls">
+    <div class="ctrl-card">
+        <div class="ctrl-label">BIM elevation reference</div>
+        <div class="elev-switch" role="tablist">
+            <button type="button" class="elev-tab active" data-value="0">Local zero</button>
+            <button type="button" class="elev-tab" data-value="1">Lowest level</button>
+        </div>
+    </div>
+    <div class="ctrl-card">
+        <div class="toggle-row" id="boundary-toggle-row">
+            <div class="toggle-text">
+                Site boundary only
+                <span class="toggle-sub" id="boundary-toggle-sub">SHOW WHOLE MODEL</span>
+            </div>
+            <label class="ios-switch" aria-label="Show site boundary only">
+                <input type="checkbox" id="boundary-toggle" />
+            </label>
+        </div>
+    </div>
+</div>
+
+<div class="tiles-notice">
+    <strong>Heads up</strong> · IFC uploaded to the server for processing — may be exposed to the host. Map tiles from maptiler.com receive coordinates only. Check your model for sensitive data before uploading.
+</div>
+
+<script src='https://unpkg.com/maplibre-gl@4.3.2/dist/maplibre-gl.js'></script>
+<link rel='stylesheet' href='https://unpkg.com/maplibre-gl@4.3.2/dist/maplibre-gl.css' />
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "/templates/build/three.module.js",
+            "three/addons/": "/templates/jsm/",
+            "three/examples/jsm/utils/BufferGeometryUtils": "/templates/jsm/utils/BufferGeometryUtils.js",
+            "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.5.23/build/index.module.js",
+            "web-ifc": "https://cdn.jsdelivr.net/npm/web-ifc@0.0.36/web-ifc-api.js",
+            "web-ifc-three": "https://cdn.jsdelivr.net/npm/web-ifc-three@0.0.126/IFCLoader.js"
+        }
+    }
+</script>
+
+<script type="module">
+    var OGx = '{{ Gx }}';
+    var OGy = '{{ Gy }}';
+    var Lat = '{{ Latitude }}';
+    var Long = '{{ Longitude }}';
+    var fn = '{{filename}}';
+    var Rot = '{{Rotate}}';
+    var sc = '{{Scale}}';
+    var scCRS = '{{ScaleCRS}}';
+    var lz = '{{LowestLevel}}'
+    var org = [0,0,0];
+    var siteBoundaryIds = {{ SiteBoundaryIds | safe }};
+
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { IFCLoader } from 'web-ifc-three';
+    import { IFCSPACE } from 'web-ifc';
+
+    let scene, renderer, map, customLayer, ifcLoader;
+    let currentStyleIndex = 0;
+    let loadedModel = null;
+    let boundarySubset = null;
+    let displayMode = 'all';
+
+    // Fade out the full-screen loading overlay once the model is in.
+    // Safety timeout (8s) in case ifc load fails silently.
+    let overlayHidden = false;
+    function hideViewerOverlay() {
+        if (overlayHidden) return;
+        overlayHidden = true;
+        const el = document.getElementById('viewer-overlay');
+        if (!el) return;
+        el.classList.add('fade-out');
+        setTimeout(() => el.remove(), 400);
+    }
+    setTimeout(hideViewerOverlay, 8000);
+
+    const styles = [
+        'https://api.maptiler.com/maps/openstreetmap/style.json?key={{ maptiler_key }}',
+        'https://api.maptiler.com/maps/streets-v2/style.json?key={{ maptiler_key }}',
+        'https://api.maptiler.com/maps/satellite/style.json?key={{ maptiler_key }}',
+    ];
+
+    async function init() {
+        map = new maplibregl.Map({
+            container: 'map',
+            style: styles[currentStyleIndex],
+            zoom: 18,
+            center: [Long, Lat],
+            pitch: 60,
+            antialias: true
+        });
+
+        const modelOrigin = [Long, Lat];
+        const modelAltitude = 0;
+        const modelRotate = [Math.PI / 2, Rot, 0];
+        const modelAsMercatorCoordinate = maplibregl.MercatorCoordinate.fromLngLat(modelOrigin, modelAltitude);
+        const customTranslateX = org.at(0) * modelAsMercatorCoordinate.meterInMercatorCoordinateUnits();
+        const customTranslateY = org.at(1) * modelAsMercatorCoordinate.meterInMercatorCoordinateUnits();
+        const customTranslateZ = org.at(2) * modelAsMercatorCoordinate.meterInMercatorCoordinateUnits();
+
+        const modelTransform = {
+            translateX: modelAsMercatorCoordinate.x + customTranslateX,
+            translateY: modelAsMercatorCoordinate.y + customTranslateY,
+            translateZ: modelAsMercatorCoordinate.z + customTranslateZ,
+            rotateX: modelRotate[0],
+            rotateY: modelRotate[1],
+            rotateZ: modelRotate[2],
+            scale: modelAsMercatorCoordinate.meterInMercatorCoordinateUnits()
+        };
+        var BIMscale = modelTransform.scale*scCRS*sc*0.9985;
+
+        scene = new THREE.Scene();
+
+        const directionalLight1 = new THREE.DirectionalLight(0xffeeff, 2.5);
+        directionalLight1.position.set(1, 1, 1);
+        scene.add(directionalLight1);
+
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 2.5);
+        directionalLight2.position.set(-1, 0.5, -1);
+        scene.add(directionalLight2);
+
+        const ambientLight = new THREE.AmbientLight(0xffffee, 0.75);
+        scene.add(ambientLight);
+
+        ifcLoader = new IFCLoader();
+        await ifcLoader.ifcManager.setWasmPath('https://cdn.jsdelivr.net/npm/web-ifc@0.0.36/', true);
+        await ifcLoader.ifcManager.parser.setupOptionalCategories({ [IFCSPACE]: false });
+        await ifcLoader.ifcManager.applyWebIfcConfig({ USE_FAST_BOOLS: true });
+        const filePath = '/uploads/' + fn;
+        ifcLoader.load(filePath, function (model) {
+            model.mesh.position.set(-OGx, 0, OGy);
+            scene.add(model.mesh);
+            const boundingBox = new THREE.Box3().setFromObject(model.mesh);
+            lz = boundingBox.min.y;
+            loadedModel = model;
+            applyDisplayMode();
+            render();
+            hideViewerOverlay();
+        });
+
+        renderer = new THREE.WebGLRenderer({
+            canvas: map.getCanvas(),
+            context: map.painter.context.gl,
+            antialias: true
+        });
+        renderer.autoClear = false;
+
+        customLayer = {
+            id: '3d-model',
+            type: 'custom',
+            renderingMode: '3d',
+            onAdd: function(map, gl) {
+                this.map = map;
+                this.renderer = renderer;
+                this.scene = scene;
+                this.camera = new THREE.PerspectiveCamera();
+            },
+            render: function(gl, matrix) {
+                const rotationX = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(1, 0, 0), modelTransform.rotateX);
+                const rotationY = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(0, 1, 0), modelTransform.rotateY);
+                const rotationZ = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(0, 0, 1), modelTransform.rotateZ);
+
+                const m = new THREE.Matrix4().fromArray(matrix);
+                const l = new THREE.Matrix4()
+                    .makeTranslation(modelTransform.translateX, modelTransform.translateY, modelTransform.translateZ)
+                    .scale(new THREE.Vector3(BIMscale,-BIMscale,BIMscale))
+                    .multiply(rotationX)
+                    .multiply(rotationY)
+                    .multiply(rotationZ);
+
+                this.camera.projectionMatrix = m.multiply(l);
+                const clippingPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), org[2]);
+                this.renderer.clippingPlanes = [clippingPlane];
+                this.renderer.localClippingEnabled = true;
+                this.renderer.resetState();
+                this.renderer.render(this.scene, this.camera);
+                this.map.triggerRepaint();
+            }
+        };
+
+        map.on('style.load', () => {
+            map.addLayer(customLayer);
+        });
+
+        window.addEventListener('resize', onWindowResize);
+        render();
+    }
+
+    function onWindowResize() {
+        customLayer.camera.aspect = window.innerWidth / window.innerHeight;
+        customLayer.camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        render();
+    }
+
+    function render() {
+        if (customLayer.camera) {
+            renderer.render(scene, customLayer.camera);
+        }
+    }
+
+    init();
+
+    function applyDisplayMode() {
+        if (!loadedModel) return;
+        const hasBoundary = Array.isArray(siteBoundaryIds) && siteBoundaryIds.length > 0;
+
+        if (displayMode === 'boundary' && hasBoundary) {
+            if (!boundarySubset) {
+                boundarySubset = ifcLoader.ifcManager.createSubset({
+                    modelID: loadedModel.modelID,
+                    scene,
+                    ids: siteBoundaryIds,
+                    removePrevious: true,
+                    customID: 'siteboundary-subset',
+                    applyBVH: false
+                });
+                if (boundarySubset) {
+                    boundarySubset.position.copy(loadedModel.mesh.position);
+                    boundarySubset.rotation.copy(loadedModel.mesh.rotation);
+                    boundarySubset.scale.copy(loadedModel.mesh.scale);
+                }
+            }
+            loadedModel.mesh.visible = false;
+            if (boundarySubset) boundarySubset.visible = true;
+        } else {
+            loadedModel.mesh.visible = true;
+            if (boundarySubset) boundarySubset.visible = false;
+        }
+        render();
+    }
+
+    document.querySelectorAll('.elev-tab').forEach((btn) => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.elev-tab').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            org[2] = btn.dataset.value === '1' ? -lz : 0;
+            init();
+            render();
+        });
+    });
+
+    const boundaryToggle = document.getElementById('boundary-toggle');
+    const boundaryToggleSub = document.getElementById('boundary-toggle-sub');
+    const boundaryToggleRow = document.getElementById('boundary-toggle-row');
+    const hasBoundary = Array.isArray(siteBoundaryIds) && siteBoundaryIds.length > 0;
+
+    if (!hasBoundary) {
+        boundaryToggle.disabled = true;
+        boundaryToggleRow.classList.add('disabled');
+        boundaryToggleRow.title = 'No IfcGeographicElement with ObjectType=SITEBOUNDARY in this model.';
+        boundaryToggleSub.textContent = 'NO SITEBOUNDARY FOUND';
+    } else {
+        boundaryToggle.addEventListener('change', function() {
+            displayMode = boundaryToggle.checked ? 'boundary' : 'all';
+            boundaryToggleSub.textContent = boundaryToggle.checked
+                ? 'SHOW SITEBOUNDARY ONLY'
+                : 'SHOW WHOLE MODEL';
+            applyDisplayMode();
+        });
+    }
+</script>
+</body>
+</html>

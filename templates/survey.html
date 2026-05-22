@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IfcGref — Survey Points</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/flavicon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <style>
+        .num-form { display: flex; flex-direction: column; gap: 10px; max-width: 320px; margin: 18px auto 0; }
+        .num-form input[type="text"] { text-align: center; font-size: 16px; }
+        .num-form .btn { justify-content: center; }
+
+        /* Survey table inputs — make them compact & monospaced */
+        .survey-table-wrap {
+            overflow-x: auto; border-radius: 10px;
+            border: 1px solid var(--border); margin: 14px 0 18px;
+        }
+        .survey-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .survey-table th {
+            background: var(--bg2); color: var(--text-2);
+            font-family: var(--mono); font-weight: 500;
+            font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase;
+            padding: 9px 10px; text-align: center;
+            border-bottom: 1px solid var(--border);
+        }
+        .survey-table td {
+            padding: 5px 6px; border-bottom: 1px solid var(--border);
+        }
+        .survey-table tr:last-child td { border-bottom: none; }
+        .survey-table td input[type="text"] {
+            padding: 7px 8px; font-size: 12px; border-radius: 6px;
+            min-width: 80px;
+        }
+        .survey-submit { display: flex; justify-content: center; margin-top: 6px; }
+    </style>
+</head>
+<body>
+    {% include '_header.html' %}
+
+    <main class="page">
+        <div class="page-hero fade-up">
+            <div class="hero-eyebrow">Step 3 · BIM &amp; Geo Information</div>
+            <h1><strong>Survey points</strong> &amp; model geo-reference</h1>
+            <p>Review what was parsed from your IFC and choose how to geo-reference it. Add known surveyed points to improve accuracy.</p>
+        </div>
+
+        <div class="card wide fade-up" style="animation-delay:0.07s">
+            <div class="file-chip"><span class="dot-accent"></span>{{ filename }}</div>
+
+            {% if messages %}
+            <div class="section-label">Parsed from IFC</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr><th>Item</th><th>Details</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for message, detail in messages %}
+                        <tr><td>{{ message }}</td><td>{{ detail }}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if error %}
+            <div class="alert warn">{{ error }}</div>
+            {% endif %}
+
+            {% if not Num %}
+                {% if Refl %}
+                <div class="section-label" style="margin-top:18px">Georeferencing method</div>
+                <div class="choice-grid">
+                    <div class="choice-box" id="box1">
+                        <img src="{{ url_for('static', filename='images/way1.png') }}" alt="">
+                        <div class="choice-label">Use existing information</div>
+                    </div>
+                    <div class="choice-box" id="box2">
+                        <img src="{{ url_for('static', filename='images/way2.png') }}" alt="">
+                        <div class="choice-label">Add surveyed points to existing information</div>
+                    </div>
+                    <div class="choice-box" id="box3">
+                        <img src="{{ url_for('static', filename='images/way3.png') }}" alt="">
+                        <div class="choice-label">Add surveyed points &amp; ignore existing</div>
+                    </div>
+                </div>
+                {% else %}
+                <form method="POST" onsubmit="showLoader()" id="numForm" class="num-form">
+                    <label class="field" for="Num">
+                        <span class="section-label" style="margin-bottom:0">Number of extra surveyed points</span>
+                        <input type="text" id="Num" name="Num" inputmode="numeric" autocomplete="off">
+                    </label>
+                    <input type="submit" value="Set →" class="btn">
+                </form>
+                {% endif %}
+            {% endif %}
+
+            {% if Num %}
+            <form method="POST" action="{{ url_for('calculate', filename=filename) }}" onsubmit="showLoader()">
+                <div class="section-label" style="margin-top:10px">Point correspondences</div>
+                <div class="survey-table-wrap">
+                    <table class="survey-table">
+                        <tr>
+                            <th colspan="3">Source CRS (IFC) [{{ ifcunit }}]</th>
+                            <th colspan="3">Target CRS (MAP) [{{ mapunit }}]</th>
+                        </tr>
+                        <tr>
+                            <th>X</th><th>Y</th><th>Z</th>
+                            <th>X'</th><th>Y'</th><th>Z'</th>
+                        </tr>
+                        {% for row in range(Num) %}
+                        <tr>
+                            <td><input type="text" name="x{{ row }}"></td>
+                            <td><input type="text" name="y{{ row }}"></td>
+                            <td><input type="text" name="z{{ row }}"></td>
+                            <td><input type="text" name="x_prime{{ row }}"></td>
+                            <td><input type="text" name="y_prime{{ row }}"></td>
+                            <td><input type="text" name="z_prime{{ row }}"></td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                </div>
+                <div class="survey-submit">
+                    <input type="submit" value="Submit →" class="btn">
+                </div>
+            </form>
+            {% else %}
+            <form method="POST" onsubmit="showLoader()" id="numForm" class="num-form" style="display:none">
+                <input type="hidden" id="boxNumber" name="boxNumber">
+                <label class="field" for="Num">
+                    <span class="section-label" style="margin-bottom:0">Number of extra surveyed points</span>
+                    <input type="text" id="Num" name="Num" inputmode="numeric" autocomplete="off">
+                </label>
+                <input type="submit" value="Set →" class="btn">
+            </form>
+            {% endif %}
+
+            <div class="loader-inline" id="loader" style="justify-content:center;margin-top:22px">
+                <div class="loader-dot"></div>
+                <span>Computing transformation…</span>
+            </div>
+        </div>
+    </main>
+
+    {% include '_footer.html' %}
+
+    <script>
+        function showLoader() { document.getElementById('loader').classList.add('active'); }
+
+        function hideBoxes(exceptId) {
+            ['box1', 'box2', 'box3'].forEach(boxId => {
+                const box = document.getElementById(boxId);
+                if (!box) return;
+                box.style.display = boxId === exceptId ? 'block' : 'none';
+            });
+        }
+
+        const box1 = document.getElementById('box1');
+        const box2 = document.getElementById('box2');
+        const box3 = document.getElementById('box3');
+
+        if (box1) box1.addEventListener('click', function() {
+            document.getElementById('numForm').style.display = 'none';
+            document.getElementById('boxNumber').value = '1';
+            document.getElementById('Num').value = '0';
+            showLoader();
+            document.getElementById('numForm').submit();
+        });
+        if (box2) box2.addEventListener('click', function() {
+            hideBoxes('box2');
+            document.getElementById('boxNumber').value = '2';
+            document.getElementById('numForm').style.display = 'flex';
+        });
+        if (box3) box3.addEventListener('click', function() {
+            hideBoxes('box3');
+            document.getElementById('boxNumber').value = '3';
+            document.getElementById('numForm').style.display = 'flex';
+        });
+    </script>
+</body>
+</html>

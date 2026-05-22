@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IfcGref — CRS Conversion</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/flavicon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <style>
+        .epsg-form { display: flex; flex-direction: column; gap: 14px; }
+        .epsg-form input[type="text"] { text-align: center; font-size: 18px; letter-spacing: 0.08em; }
+        .epsg-hint { font-family: var(--mono); font-size: 11px; color: var(--text-3); text-align: center; }
+    </style>
+</head>
+<body>
+    {% include '_header.html' %}
+
+    <main class="page">
+        <div class="page-hero fade-up">
+            <div class="hero-eyebrow">Step 2 · Target CRS</div>
+            <h1>Set the <strong>target coordinate system</strong></h1>
+            <p>Enter the EPSG code of the projected CRS you want to geo-reference your IFC model to. The code is a 4–5 digit number (e.g. <span style="font-family:var(--mono);">3414</span> for SVY21, <span style="font-family:var(--mono);">28992</span> for RD New).</p>
+        </div>
+
+        <div class="card narrow fade-up" style="animation-delay:0.07s">
+            <div class="file-chip"><span class="dot-accent"></span>{{ filename }}</div>
+
+            {% if message %}
+            <div class="alert error">{{ message | safe }}</div>
+            {% endif %}
+
+            <form method="POST" class="epsg-form" onsubmit="showLoader()">
+                <label class="field" for="epsg_code">
+                    <span class="section-label" style="margin-bottom:0">EPSG code</span>
+                    <input type="text" id="epsg_code" name="epsg_code" placeholder="e.g. 3414" autocomplete="off" inputmode="numeric" required>
+                </label>
+                <div class="epsg-hint">Look up codes at <a href="https://epsg.io/" class="accent-link" style="color:var(--accent);text-decoration:underline" target="_blank" rel="noreferrer">epsg.io</a></div>
+                <input type="submit" value="Convert →" class="btn" style="justify-content:center;margin-top:4px">
+            </form>
+
+            <div class="loader-inline" id="loader">
+                <div class="loader-dot"></div>
+                <span>Reading IFC & resolving CRS…</span>
+            </div>
+        </div>
+    </main>
+
+    {% include '_footer.html' %}
+
+    <script>
+        function showLoader() { document.getElementById('loader').classList.add('active'); }
+    </script>
+</body>
+</html>

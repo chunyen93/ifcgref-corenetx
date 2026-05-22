@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IfcGref — Geo-Reference Report</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/flavicon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <style>
+        .report-section + .report-section { margin-top: 20px; }
+
+        /* Corenet X SG compliance badge & checklist */
+        .compliance-badge {
+            display: flex; align-items: center; gap: 14px;
+            padding: 15px 16px;
+            border: 1px solid; border-radius: 12px;
+            margin-bottom: 22px;
+        }
+        .compliance-badge.pass { background: var(--success-dim); border-color: var(--success-border); }
+        .compliance-badge.fail { background: var(--danger-dim);  border-color: var(--danger-border);  }
+        .compliance-badge.na   { background: var(--bg2);          border-color: var(--border);         }
+        .badge-icon {
+            width: 40px; height: 40px; border-radius: 50%;
+            display: grid; place-items: center; flex-shrink: 0;
+            color: white; font-size: 18px; font-weight: 600;
+        }
+        .compliance-badge.pass .badge-icon { background: var(--success); }
+        .compliance-badge.fail .badge-icon { background: var(--danger);  }
+        .compliance-badge.na   .badge-icon { background: var(--border-strong); color: var(--text-2); }
+        .badge-text { flex: 1; }
+        .badge-title { font-size: 14px; font-weight: 600; }
+        .compliance-badge.pass .badge-title { color: var(--success); }
+        .compliance-badge.fail .badge-title { color: var(--danger);  }
+        .compliance-badge.na   .badge-title { color: var(--text-2);  }
+        .badge-sub { font-size: 11.5px; color: var(--text-3); margin-top: 3px; line-height: 1.5; }
+
+        .checklist { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+        .check-item {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 8px; overflow: hidden;
+        }
+        .check-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 14px;
+            font-size: 13px;
+        }
+        .check-icon {
+            width: 20px; height: 20px; border-radius: 50%;
+            display: grid; place-items: center; flex-shrink: 0;
+            color: white; font-size: 12px; font-weight: 700;
+        }
+        .check-item.pass .check-icon { background: var(--success); }
+        .check-item.fail .check-icon { background: var(--danger); }
+        .check-label { flex: 1; color: var(--text-2); font-weight: 500; }
+        .check-item.fail .check-label { color: var(--danger); }
+        .check-value { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+        .check-tip {
+            display: flex; gap: 8px;
+            padding: 9px 14px 11px 44px;
+            border-top: 1px dashed var(--border);
+            background: oklch(99% 0.01 90 / 0.6);
+            font-size: 12px; color: var(--text-2); line-height: 1.55;
+        }
+        .check-tip::before {
+            content: 'TIP'; font-family: var(--mono); font-size: 9.5px;
+            letter-spacing: 0.08em; color: var(--text-3);
+            border: 1px solid var(--border-strong); border-radius: 3px;
+            padding: 1px 5px; height: 14px; flex-shrink: 0; margin-top: 1px;
+        }
+        .corenet-recommend {
+            margin-top: 14px;
+            padding: 12px 14px;
+            background: var(--bg2); border: 1px solid var(--border-strong);
+            border-radius: 8px; font-size: 12.5px; color: var(--text-2);
+            line-height: 1.55;
+        }
+        .corenet-recommend strong { color: var(--text); font-weight: 600; }
+    </style>
+</head>
+<body>
+    {% include '_header.html' %}
+
+    <main class="page">
+        <div class="privacy-note warn fade-up" style="margin: 0 auto 24px">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <p><strong>Heads up — your model was sent to the server for processing.</strong> The IFC was parsed server-side and may be visible to the server administrator. Check the file for sensitive data (project names, client identifiers, addresses, internal codes) before sharing this report or re-uploading.</p>
+        </div>
+
+        <div class="page-hero fade-up">
+            <div class="hero-eyebrow">Geo-Reference Report</div>
+            <h1><strong>Geo-Reference</strong> data</h1>
+            <p>Here's the IfcProjectedCRS &amp; IfcMapConversion parsed from your model, plus a Corenet X IFC-SG compliance check for Singapore models.</p>
+        </div>
+
+        <div class="card wide fade-up" style="animation-delay:0.07s">
+            <div class="file-chip"><span class="dot-accent"></span>{{ filename }}</div>
+
+            {% if message %}
+            <div class="alert warn">{{ message | safe }}</div>
+            {% endif %}
+
+            {% if compliance %}
+                {% if compliance.status == 'pass' %}
+                <div class="compliance-badge pass">
+                    <div class="badge-icon">✓</div>
+                    <div class="badge-text">
+                        <div class="badge-title">Corenet X IFC-SG Geo-Reference Compliant</div>
+                        <div class="badge-sub">IfcSite is placed at real-world SVY21 (EPSG:3414) Eastings/Northings. Ready for CORENET X submission.</div>
+                    </div>
+                </div>
+                {% elif compliance.status == 'fail' %}
+                <div class="compliance-badge fail">
+                    <div class="badge-icon">✕</div>
+                    <div class="badge-text">
+                        <div class="badge-title">Not Corenet X IFC-SG Compliant</div>
+                        <div class="badge-sub">Corenet X requires IfcSite.ObjectPlacement to carry SVY21 Eastings/Northings — IfcMapConversion alone is not accepted.</div>
+                    </div>
+                </div>
+                {% else %}
+                <div class="compliance-badge na">
+                    <div class="badge-icon">—</div>
+                    <div class="badge-text">
+                        <div class="badge-title">Non-Singapore Model</div>
+                        <div class="badge-sub">Corenet X IFC-SG compliance check is not applicable.</div>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if compliance.checks %}
+                <div class="report-section" style="margin-top:-6px">
+                    <div class="section-label">Corenet X IFC-SG Checklist</div>
+                    <div class="checklist">
+                        {% for c in compliance.checks %}
+                        <div class="check-item {{ 'pass' if c.pass else 'fail' }}">
+                            <div class="check-row">
+                                <span class="check-icon">{{ '✓' if c.pass else '✕' }}</span>
+                                <span class="check-label">{{ c.label }}</span>
+                                <span class="check-value">{{ c.value }}</span>
+                            </div>
+                            {% if not c.pass and c.tip %}
+                            <div class="check-tip">{{ c.tip }}</div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% if compliance.status == 'fail' %}
+                    <div class="corenet-recommend">
+                        <strong>Need more guidance?</strong> Refer to the <strong>BCA CORENET X</strong> website for the official IFC-SG submission requirements and the latest pilot mapping for geo-referencing.
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endif %}
+
+            <div class="report-section">
+                <div class="section-label">IfcProjectedCRS</div>
+                <div class="table-wrap pandas-table">{{ table_f | safe }}</div>
+            </div>
+
+            <div class="report-section">
+                <div class="section-label">IfcMapConversion</div>
+                <div class="table-wrap pandas-table">{{ table_g | safe }}</div>
+            </div>
+
+            <div class="btn-row">
+                <form method="POST" action="{{ url_for('visualize', filename=filename) }}" onsubmit="showLoader()" style="display:inline">
+                    <button type="submit" class="btn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><path d="M8 2v16M16 6v16"/></svg>
+                        Show on Map
+                    </button>
+                </form>
+
+                {% if not message %}
+                <a href="{{ url_for('download', filename=filename) }}" download class="btn secondary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                    Download Georeferenced IFC
+                </a>
+                {% endif %}
+            </div>
+
+        </div>
+    </main>
+
+    <div class="page-overlay" id="page-overlay" aria-hidden="true">
+        <div class="overlay-content">
+            <div class="spinner-big"></div>
+            <div class="overlay-text">
+                <strong>Preparing 3D view…</strong>
+                <span>Loading map tiles and parsing your IFC model for visualisation. This can take a few seconds.</span>
+            </div>
+        </div>
+    </div>
+
+    {% include '_footer.html' %}
+
+    <script>
+        function showLoader() {
+            document.getElementById('page-overlay').classList.add('active');
+        }
+    </script>
+</body>
+</html>

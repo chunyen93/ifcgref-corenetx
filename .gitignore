@@ -1,0 +1,48 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Virtual environments ──
+venv/
+.venv/
+env/
+ENV/
+
+# ── Secrets / local config ──
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ── User uploads (runtime data, not source) ──
+uploads/*
+!uploads/.gitkeep
+
+# ── Editors / IDE ──
+.vscode/
+.vs/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# ── macOS / Windows / Linux noise ──
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Logs ──
+*.log
+logs/
