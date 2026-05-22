@@ -1,64 +1,61 @@
 # ifcgref-corenetx
 
-A Singapore-focused fork of [tudelft3d/ifcgref](https://github.com/tudelft3d/ifcgref) with a CORENET X / IFC-SG compliance check on top of the original geo-referencing inspector.
+A web tool for **checking IFC geo-referencing against the Singapore CORENET X / IFC-SG standard**. Upload your IFC, get a pass/fail report on the three things that matter for BCA submission, and see the model placed on a real-world map.
 
-Inspect the geo-referencing data in your IFC model, see Corenet X IFC-SG compliance flags for Singapore models, and visualise the geometry on a real-world map.
+Useful for BIM coordinators, modellers, and IFC consultants who need to verify a model is correctly geo-referenced **before** submitting to CORENET X.
 
-## What this fork adds
+## What it checks
 
-- **CORENET X IFC-SG checklist** on the report page — three checks: CRS is SVY21 / EPSG:3414, `IfcGeographicElement` with `ObjectType='SITEBOUNDARY'` is present, and coordinates land within the SVY21 Singapore map. Failing checks show tips for fixing them in your BIM software.
-- **IFC unit awareness** — placement coordinates are converted to metres from whatever the IFC project unit is (`MILLI`/`CENTI`/`METRE`, or `IfcConversionBasedUnit` like `INCH`/`FOOT`) before comparing against SG bounds.
-- **3D viewer site-boundary toggle** — iOS-style switch to subset the loaded IFC down to just the `SITEBOUNDARY` geometry vs. showing the whole model.
-- **50 MB upload cap** with three-layer enforcement and a privacy warning, to discourage uploading federated multi-discipline BIMs with sensitive data.
-- **Magic-byte upload check** — rejects anything that doesn't start with `ISO-10303-21`, regardless of extension.
-- **Production-ready config** — env-driven secrets, hardened session cookies, structured logging, gunicorn entry point.
+The report page runs three checks against the BCA IFC-SG requirements:
+
+1. **CRS is SVY21 (EPSG:3414)** — declared via `IfcProjectedCRS`.
+2. **`IfcGeographicElement` with `ObjectType = SITEBOUNDARY` exists** — the IFC-SG site-boundary element is present in the model.
+3. **Coordinates land inside the SVY21 Singapore map** — the model's real-world placement (`IfcSite.ObjectPlacement` or the SITEBOUNDARY element) falls within the SG E/N bounds. Coordinates are converted from the IFC project's unit (mm, cm, m, inch, foot…) before comparison.
+
+Failing checks show inline fix tips. A footer card points to the BCA CORENET X submission requirements when anything is non-compliant.
+
+## Other features
+
+- **3D map viewer** — places the IFC model on a MapTiler basemap using the IFC's `IfcMapConversion` rotation/scale, with an iOS-style toggle to show the whole model or just the SITEBOUNDARY geometry.
+- **50 MB upload cap** with magic-byte verification (`ISO-10303-21` header) to discourage uploading federated full-discipline BIMs and reject mis-typed files.
+- **Server-upload privacy warnings** on every page — the IFC is processed on the host, not in your browser. Don't upload confidential models.
+- **Production-ready** — env-driven secrets, gunicorn entry point, hardened session cookies, structured logging.
 
 ## Running locally
 
 ```bash
-# 1. Clone and enter the directory
 git clone https://github.com/chunyen93/ifcgref-corenetx.git
 cd ifcgref-corenetx
 
-# 2. (Recommended) create a virtualenv
 python3 -m venv .venv
 source .venv/bin/activate
-
-# 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Copy the env template and fill it in
 cp .env.example .env
-# Edit .env — set FLASK_SECRET_KEY (any random string for dev) and
+# Edit .env: set FLASK_SECRET_KEY (any random string for dev) and
 # MAPTILER_KEY (free at https://www.maptiler.com/)
 
-# 5. Load env and run
 export $(grep -v '^#' .env | xargs)
 python app.py
 ```
 
-Open <http://localhost:5000/>.
+Then open <http://localhost:5000/>.
 
 ## Environment variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `FLASK_SECRET_KEY` | prod | `dev-secret-change-me` | Signs the session cookie. Generate with `python -c "import secrets; print(secrets.token_hex(32))"`. |
-| `MAPTILER_KEY` | yes | empty | MapTiler API key for the 3D viewer basemap. Free tier is enough. |
+| `MAPTILER_KEY` | yes | empty | MapTiler API key for the 3D viewer's basemap. Free tier is enough. |
 | `FLASK_ENV` | no | empty | Set to `development` to enable debug mode and allow http session cookies. |
-| `LOG_LEVEL` | no | `INFO` | Standard logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `LOG_LEVEL` | no | `INFO` | Standard logging level. |
 | `PORT` | no | `5000` | Dev server port. Production hosts (Render, Heroku) inject their own. |
 
 ## Deploying
 
 ### Render.com (recommended)
 
-The repo includes [render.yaml](render.yaml) — connect this repo at <https://dashboard.render.com/select-repo> and Render will read the config. On the first deploy:
-
-1. Render auto-generates `FLASK_SECRET_KEY`.
-2. You'll be prompted for `MAPTILER_KEY` (sync: false → set manually in the dashboard).
-3. Build runs `pip install -r requirements.txt`; start runs `gunicorn app:app …`.
-4. Free tier spins down on idle (~30 s wake on first hit).
+The repo includes [render.yaml](render.yaml) — connect at <https://dashboard.render.com/select-repo> and Render reads the config. `FLASK_SECRET_KEY` is auto-generated; set `MAPTILER_KEY` in the dashboard when prompted. First build takes 5–10 minutes (ifcopenshell + pyproj wheels).
 
 ### Any host with Python + gunicorn
 
@@ -68,15 +65,11 @@ gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
 
 A [Procfile](Procfile) is included for Heroku-style hosts.
 
-> **Won't work on Netlify or Vercel** — both are serverless. This app needs persistent disk between requests (upload → parse → visualize) and 60-second-plus parsing time, neither of which fits serverless function limits.
-
-## Privacy
-
-This is **not** a local-only tool — uploaded IFCs are sent to and processed on the hosting server. Each new upload purges the previous file from the local cache, but earlier copies may persist in server logs / backups depending on how the host operates. **Don't upload confidential or NDA-restricted models** to a public-internet deployment. The 50 MB cap and the warnings on every page exist to nudge you toward site/coordination models, not federated full-discipline BIMs.
+> **Won't work on Netlify or Vercel** — both are serverless. This app needs persistent disk between the upload and visualize requests, and IFC parsing can exceed serverless function timeouts.
 
 ## Supported IFC versions
 
-| IFC version | Notes |
+| Version | Notes |
 |---|---|
 | IFC 4.3 ADD2 | Full support |
 | IFC 4 (all addenda) | Full support |
@@ -86,19 +79,19 @@ This is **not** a local-only tool — uploaded IFCs are sent to and processed on
 
 ```
 app.py              Flask routes, IFC parsing, CORENET X checks
-georeference_ifc/   Vendored geo-reference helpers from upstream
+georeference_ifc/   Geo-reference helpers
 static/             CSS, fonts, images, favicon
-templates/          Jinja templates (upload, result, view3D, convert, survey)
+templates/          Jinja templates
 uploads/            Runtime upload cache (gitignored)
 requirements.txt    Pinned Python dependencies
-render.yaml         Render.com one-click deploy config
+render.yaml         Render.com deploy config
 Procfile            Heroku-style web process declaration
 ```
 
-## Credits
+## Privacy
 
-Built on top of [tudelft3d/ifcgref](https://github.com/tudelft3d/ifcgref) by the 3D Geoinformation group at TU Delft (MIT). The CORENET X / IFC-SG layer follows the BCA CORENET X Pilot Mapping; refer to the BCA CORENET X website for the official submission requirements.
+This is **not** a local-only tool — uploaded IFCs are sent to and processed on the hosting server. Each new upload purges the previous file from the local cache, but earlier copies may persist in server logs or backups depending on how the host operates. **Don't upload confidential or NDA-restricted models** to a public-internet deployment. The 50 MB cap and the warnings on every page exist to nudge users toward site/coordination models, not federated full-discipline BIMs.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE). Includes geo-referencing helpers derived from [tudelft3d/ifcgref](https://github.com/tudelft3d/ifcgref) (MIT), see [LICENSE](LICENSE) for attribution.
