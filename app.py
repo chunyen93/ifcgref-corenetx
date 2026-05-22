@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import os
 import re
@@ -25,6 +26,11 @@ from werkzeug.utils import secure_filename
 import georeference_ifc
 
 
+logging.basicConfig(
+    level=os.environ.get('LOG_LEVEL', 'INFO').upper(),
+    format='%(asctime)s %(levelname)s [%(name)s] %(message)s',
+)
+
 app = Flask(__name__, static_url_path='/static', static_folder='static')
 
 # Secrets / runtime config from environment (see .env.example).
@@ -33,10 +39,23 @@ app = Flask(__name__, static_url_path='/static', static_folder='static')
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-change-me')
 MAPTILER_KEY = os.environ.get('MAPTILER_KEY', '')
 
+# Production hardening — session cookie flags. SESSION_COOKIE_SECURE is on
+# whenever FLASK_ENV != 'development' so we don't fight local http during dev.
+_is_dev = os.environ.get('FLASK_ENV', '').lower() == 'development'
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=not _is_dev,
+)
+
 app.config['UPLOAD_FOLDER'] = 'uploads'
 MAX_UPLOAD_MB = 50
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_MB * 1024 * 1024
-ALLOWED_EXTENSIONS = {'ifc'}  # Define allowed file extensions as a set
+ALLOWED_EXTENSIONS = {'ifc'}
+# First line of every IFC-SPF file. We verify this magic before accepting an
+# upload so a renamed .exe (or any non-IFC blob) is rejected even if the
+# extension says .ifc.
+IFC_SPF_MAGIC = b'ISO-10303-21'
 
 @app.errorhandler(413)
 def _too_large(_e):
@@ -432,43 +451,73 @@ def index():
 def upload_file():
     purge_uploads()
     if 'file' not in request.files:
-        return "No file part"
+        return render_template('upload.html', error_message="No file in upload."), 400
     file = request.files['file']
     if file.filename == '':
-        return "No selected file"
-    if file and allowed_file(file.filename):  # Check if the file extension is allowed
-        filename = secure_filename(file.filename)
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        ifc_file = fileOpener(filename)
+        return render_template('upload.html', error_message="No file selected."), 400
+    if not allowed_file(file.filename):
+        return render_template('upload.html', error_message="Invalid file format. Please upload a .ifc file."), 400
 
-        message, geo = georef(ifc_file)
-        if geo:
-            IfcMapConversion, IfcProjectedCRS = georeference_ifc.get_mapconversion_crs(ifc_file=ifc_file)
-            df = pd.DataFrame(list(IfcProjectedCRS.__dict__.items()), columns= ['property', 'value'])
-            dg = pd.DataFrame(list(IfcMapConversion.__dict__.items()), columns= ['property', 'value'])
-            html_table_f = df.to_html()
-            html_table_g = dg.to_html()
-            compliance = check_corenet_sg(ifc_file)
-            IfcMapConversion, IfcProjectedCRS = georeference_ifc.get_mapconversion_crs(ifc_file=ifc_file)
-            target = IfcProjectedCRS.Name.split(':')
-            epsg = int(target[1])
-            message2 = infoExt(filename,epsg)
-            coeff = session.get('coeff')
-            if coeff is None:
-                return render_template('result.html', filename=filename, table_f=html_table_f, table_g=html_table_g, message=message2, compliance=compliance)
+    filename = secure_filename(file.filename)
+    if not filename:  # secure_filename can return '' for adversarial input
+        return render_template('upload.html', error_message="Invalid filename."), 400
 
-            if int(coeff)!=1 and IfcMapConversion.Scale is None:
-                message += "There is a conflict between Scale factor and unit conversion. (Yet to be decided by buildingSmart.)"
-                session['scaleError']=True
-                return render_template('result.html', filename=filename, table_f=html_table_f, table_g=html_table_g, message=message, compliance=compliance)
-            if int(coeff)!=1 and int(IfcMapConversion.Scale) == 1:
-                message += "There is a conflict between Scale factor and unit conversion. (Yet to be decided by buildingSmart.)"
-                session['scaleError']=True
-            return render_template('result.html', filename=filename, table_f=html_table_f, table_g=html_table_g, message=message, compliance=compliance)
-        
-        return redirect(url_for('convert_crs', filename=filename))  # Redirect to EPSG code input page
-    else:
-        return render_template('upload.html', error_message="Invalid file format. Please upload a .ifc file.")
+    save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(save_path)
+
+    # Reject anything that isn't an IFC-SPF file regardless of extension.
+    try:
+        with open(save_path, 'rb') as fh:
+            header = fh.read(len(IFC_SPF_MAGIC))
+    except OSError:
+        header = b''
+    if not header.startswith(IFC_SPF_MAGIC):
+        try:
+            os.remove(save_path)
+        except OSError:
+            pass
+        app.logger.warning("Rejected non-IFC upload: %s", filename)
+        return render_template(
+            'upload.html',
+            error_message="File is not a valid IFC (missing ISO-10303-21 header).",
+        ), 400
+
+    ifc_file = fileOpener(filename)
+    if ifc_file is None:
+        try:
+            os.remove(save_path)
+        except OSError:
+            pass
+        return render_template(
+            'upload.html',
+            error_message="Could not parse IFC file. Check that it's a valid IFC2x3 / IFC4 / IFC4.3 model.",
+        ), 400
+
+    message, geo = georef(ifc_file)
+    if not geo:
+        return redirect(url_for('convert_crs', filename=filename))
+
+    IfcMapConversion, IfcProjectedCRS = georeference_ifc.get_mapconversion_crs(ifc_file=ifc_file)
+    df = pd.DataFrame(list(IfcProjectedCRS.__dict__.items()), columns=['property', 'value'])
+    dg = pd.DataFrame(list(IfcMapConversion.__dict__.items()), columns=['property', 'value'])
+    html_table_f = df.to_html()
+    html_table_g = dg.to_html()
+    compliance = check_corenet_sg(ifc_file)
+    target = IfcProjectedCRS.Name.split(':')
+    epsg = int(target[1])
+    message2 = infoExt(filename, epsg)
+    coeff = session.get('coeff')
+    if coeff is None:
+        return render_template('result.html', filename=filename, table_f=html_table_f, table_g=html_table_g, message=message2, compliance=compliance)
+
+    if int(coeff) != 1 and IfcMapConversion.Scale is None:
+        message += "There is a conflict between Scale factor and unit conversion. (Yet to be decided by buildingSmart.)"
+        session['scaleError'] = True
+        return render_template('result.html', filename=filename, table_f=html_table_f, table_g=html_table_g, message=message, compliance=compliance)
+    if int(coeff) != 1 and int(IfcMapConversion.Scale) == 1:
+        message += "There is a conflict between Scale factor and unit conversion. (Yet to be decided by buildingSmart.)"
+        session['scaleError'] = True
+    return render_template('result.html', filename=filename, table_f=html_table_f, table_g=html_table_g, message=message, compliance=compliance)
 
 @app.route('/convert/<filename>', methods=['GET', 'POST'])
 def convert_crs(filename):
@@ -825,4 +874,8 @@ def ups(filename):
     return send_from_directory('uploads', filename)
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5000, debug=True)
+    # Local development entry point. In production, run via a WSGI server:
+    #   gunicorn app:app --bind 0.0.0.0:$PORT --workers 2
+    port = int(os.environ.get('PORT', '5000'))
+    debug = os.environ.get('FLASK_ENV', '').lower() == 'development'
+    app.run(host='127.0.0.1', port=port, debug=debug)
