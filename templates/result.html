@@ -109,7 +109,7 @@
                     <div class="badge-icon">✓</div>
                     <div class="badge-text">
                         <div class="badge-title">Corenet X IFC-SG Geo-Reference Compliant</div>
-                        <div class="badge-sub">IfcSite is placed at real-world SVY21 (EPSG:3414) Eastings/Northings. Ready for CORENET X submission.</div>
+                        <div class="badge-sub">CRS is SVY21 (EPSG:3414), a SITEBOUNDARY IfcGeographicElement is present, and coordinates land inside the Singapore map. Ready for CORENET X submission.</div>
                     </div>
                 </div>
                 {% elif compliance.status == 'fail' %}
@@ -117,7 +117,7 @@
                     <div class="badge-icon">✕</div>
                     <div class="badge-text">
                         <div class="badge-title">Not Corenet X IFC-SG Compliant</div>
-                        <div class="badge-sub">Corenet X requires IfcSite.ObjectPlacement to carry SVY21 Eastings/Northings — IfcMapConversion alone is not accepted.</div>
+                        <div class="badge-sub">One or more IFC-SG checks failed. Expand each ✕ below for a fix tip.</div>
                     </div>
                 </div>
                 {% else %}
@@ -125,7 +125,7 @@
                     <div class="badge-icon">—</div>
                     <div class="badge-text">
                         <div class="badge-title">Non-Singapore Model</div>
-                        <div class="badge-sub">Corenet X IFC-SG compliance check is not applicable.</div>
+                        <div class="badge-sub">Corenet X IFC-SG compliance check is not applicable to models outside Singapore.</div>
                     </div>
                 </div>
                 {% endif %}
